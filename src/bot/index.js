@@ -2,7 +2,8 @@ import TelegramBot from 'node-telegram-bot-api';
 
 // Telegram bot configuration
 const token = '7435351031:AAHwFywxl4j9Ou5aJcndg6OBuvzBJisymfY';
-const adminChatId = process.env.ADMIN_CHAT_ID || ''; // Will need to be set once you get your admin chat ID
+const adminUsername = 'valerianychexe';
+let adminChatId = '';
 
 const bot = new TelegramBot(token, { polling: true });
 
@@ -19,8 +20,16 @@ const userStates = new Map();
 // Store requests
 const requests = new Map();
 
-bot.onText(/\/start/, (msg) => {
+// Set admin chat ID when they interact with the bot
+bot.onText(/\/start/, async (msg) => {
   const chatId = msg.chat.id;
+  
+  // If this is the admin's first message, store their chat ID
+  if (msg.from.username === adminUsername && !adminChatId) {
+    adminChatId = chatId.toString();
+    await bot.sendMessage(chatId, '✅ Вы успешно авторизованы как администратор!');
+  }
+
   const keyboard = {
     keyboard: [
       [{ text: categories.HARDWARE_REPLACEMENT }],
@@ -108,6 +117,12 @@ bot.on('message', async (msg) => {
 
 // Handle admin actions
 bot.on('callback_query', async (query) => {
+  // Verify that the action is coming from admin
+  if (query.from.username !== adminUsername) {
+    bot.answerCallbackQuery(query.id, { text: '⚠️ У вас нет прав для этого действия' });
+    return;
+  }
+
   const [action, requestId] = query.data.split('_');
   const request = requests.get(requestId);
   
