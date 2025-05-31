@@ -20,6 +20,26 @@ const userStates = new Map();
 // Store requests
 const requests = new Map();
 
+// Store notification users
+const notificationUsers = new Map();
+
+// Helper function to notify all admins
+async function notifyAdmins(message, keyboard = {}) {
+  const admins = [adminChatId, ...Array.from(notificationUsers.values())
+    .filter(user => user.isAdmin)
+    .map(user => user.chatId)];
+
+  for (const chatId of admins) {
+    if (chatId) {
+      try {
+        await bot.sendMessage(chatId, message, keyboard ? { reply_markup: keyboard } : {});
+      } catch (error) {
+        console.error(`Failed to notify admin ${chatId}:`, error.message);
+      }
+    }
+  }
+}
+
 // Set admin chat ID when they interact with the bot
 bot.onText(/\/start/, async (msg) => {
   const chatId = msg.chat.id;
@@ -93,19 +113,17 @@ bot.on('message', async (msg) => {
 ⏰ Время: ${request.createdAt.toLocaleString('ru-RU')}
     `;
     
-    // If adminChatId is set, send to admin
-    if (adminChatId) {
-      const keyboard = {
-        inline_keyboard: [
-          [
-            { text: '✅ Принять', callback_data: `accept_${requestId}` },
-            { text: '❌ Отклонить', callback_data: `reject_${requestId}` }
-          ]
+    const keyboard = {
+      inline_keyboard: [
+        [
+          { text: '✅ Принять', callback_data: `accept_${requestId}` },
+          { text: '❌ Отклонить', callback_data: `reject_${requestId}` }
         ]
-      };
-      
-      bot.sendMessage(adminChatId, adminMessage, { reply_markup: keyboard });
-    }
+      ]
+    };
+    
+    // Notify all admins
+    await notifyAdmins(adminMessage, keyboard);
     
     // Confirm to user
     bot.sendMessage(chatId, 'Ваша заявка успешно создана! Мы рассмотрим её в ближайшее время.');
@@ -117,16 +135,19 @@ bot.on('message', async (msg) => {
 
 // Handle admin actions
 bot.on('callback_query', async (query) => {
-  // Verify that the action is coming from admin
-  if (query.from.username !== adminUsername) {
-    bot.answerCallbackQuery(query.id, { text: '⚠️ У вас нет прав для этого действия' });
-    return;
-  }
-
   const [action, requestId] = query.data.split('_');
   const request = requests.get(requestId);
   
   if (!request) return;
+
+  // Check if the user is an admin
+  const isAdmin = query.from.username === adminUsername || 
+    notificationUsers.get(query.from.username)?.isAdmin;
+
+  if (!isAdmin) {
+    bot.answerCallbackQuery(query.id, { text: '⚠️ У вас нет прав для этого действия' });
+    return;
+  }
 
   if (action === 'accept') {
     request.status = 'IN_PROGRESS';
@@ -134,29 +155,64 @@ bot.on('callback_query', async (query) => {
     requests.set(requestId, request);
     
     // Notify user
-    bot.sendMessage(request.userId, `Ваша заявка #${requestId} принята в работу! Мы свяжемся с вами в ближайшее время.`);
+    bot.sendMessage(request.userId, `✅ Ваша заявка #${requestId} принята в работу! Мы свяжемся с вами в ближайшее время.`);
     
     // Update admin message
-    bot.editMessageText(`✅ Заявка принята в работу\n${query.message.text}`, {
-      chat_id: adminChatId,
-      message_id: query.message.message_id
-    });
+    const updatedMessage = `
+✅ Заявка принята в работу
+📝 Заявка #${requestId}
+👤 От: @${request.username}
+📋 Категория: ${categories[request.category]}
+📄 Описание: ${request.description}
+⏰ Обновлено: ${request.updatedAt.toLocaleString('ru-RU')}
+    `;
+    
+    await notifyAdmins(updatedMessage);
+    
   } else if (action === 'reject') {
     request.status = 'REJECTED';
     request.updatedAt = new Date();
     requests.set(requestId, request);
     
     // Notify user
-    bot.sendMessage(request.userId, `К сожалению, ваша заявка #${requestId} была отклонена. Пожалуйста, создайте новую заявку с более подробным описанием.`);
+    bot.sendMessage(request.userId, `❌ К сожалению, ваша заявка #${requestId} была отклонена. Пожалуйста, создайте новую заявку с более подробным описанием.`);
     
     // Update admin message
-    bot.editMessageText(`❌ Заявка отклонена\n${query.message.text}`, {
-      chat_id: adminChatId,
-      message_id: query.message.message_id
-    });
+    const updatedMessage = `
+❌ Заявка отклонена
+📝 Заявка #${requestId}
+👤 От: @${request.username}
+📋 Категория: ${categories[request.category]}
+📄 Описание: ${request.description}
+⏰ Обновлено: ${request.updatedAt.toLocaleString('ru-RU')}
+    `;
+    
+    await notifyAdmins(updatedMessage);
   }
   
   bot.answerCallbackQuery(query.id);
+});
+
+// Command to add notification user
+bot.onText(/\/adduser (.+)/, async (msg, match) => {
+  if (msg.from.username !== adminUsername) {
+    bot.sendMessage(msg.chat.id, '⚠️ Только главный администратор может добавлять пользователей');
+    return;
+  }
+
+  const [username, chatId] = match[1].split(' ');
+  if (!username || !chatId) {
+    bot.sendMessage(msg.chat.id, '⚠️ Формат: /adduser username chatId');
+    return;
+  }
+
+  notificationUsers.set(username, {
+    username,
+    chatId,
+    isAdmin: true
+  });
+
+  bot.sendMessage(msg.chat.id, `✅ Пользователь @${username} добавлен для получения уведомлений`);
 });
 
 console.log('Бот запущен и готов к работе...');

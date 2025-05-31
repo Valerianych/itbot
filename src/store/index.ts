@@ -4,15 +4,18 @@ import type { SupportRequest, NotificationUser, RequestStatus } from '../types';
 interface AppState {
   requests: SupportRequest[];
   notificationUsers: NotificationUser[];
+  selectedRequest: string | null;
   addRequest: (request: SupportRequest) => void;
   updateRequestStatus: (id: string, status: RequestStatus) => void;
   addNotificationUser: (user: NotificationUser) => void;
   removeNotificationUser: (id: string) => void;
+  setSelectedRequest: (id: string | null) => void;
 }
 
 export const useStore = create<AppState>((set) => ({
   requests: [],
   notificationUsers: [],
+  selectedRequest: null,
   addRequest: (request) =>
     set((state) => ({ requests: [...state.requests, request] })),
   updateRequestStatus: (id, status) =>
@@ -31,4 +34,5 @@ export const useStore = create<AppState>((set) => ({
     set((state) => ({
       notificationUsers: state.notificationUsers.filter((user) => user.id !== id),
     })),
+  setSelectedRequest: (id) => set({ selectedRequest: id }),
 }));
