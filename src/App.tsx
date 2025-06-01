@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { Clock, Monitor, Settings, PenTool as Tool, UserPlus, X, Check, ArrowLeft, Users, FileText } from 'lucide-react';
+import { Clock, Monitor, Settings, PenTool as Tool, UserPlus, X, Check, ArrowLeft, Users, FileText, Power } from 'lucide-react';
 import { format } from 'date-fns';
 import { useStore } from './store';
 import type { SupportRequest, RequestCategory, NotificationUser } from './types';
@@ -223,6 +223,58 @@ function NotificationUsersList() {
   );
 }
 
+function BotControl() {
+  const { botState, setBotState } = useStore();
+
+  const toggleBot = async () => {
+    try {
+      const response = await fetch('/api/bot/toggle', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ action: botState.isRunning ? 'stop' : 'start' }),
+      });
+
+      if (response.ok) {
+        setBotState({
+          isRunning: !botState.isRunning,
+          [botState.isRunning ? 'lastStopped' : 'lastStarted']: new Date(),
+        });
+      }
+    } catch (error) {
+      console.error('Failed to toggle bot:', error);
+    }
+  };
+
+  return (
+    <div className="mb-6 bg-white rounded-lg shadow-md p-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <h3 className="text-lg font-semibold">Статус Telegram бота</h3>
+          <p className="text-sm text-gray-500">
+            {botState.isRunning ? 'Бот активен' : 'Бот неактивен'}
+            {botState.lastStarted && botState.isRunning && (
+              <span className="ml-2">
+                (с {format(botState.lastStarted, 'HH:mm dd.MM.yyyy')})
+              </span>
+            )}
+          </p>
+        </div>
+        <button
+          onClick={toggleBot}
+          className={`px-4 py-2 rounded-md text-white flex items-center space-x-2 ${
+            botState.isRunning ? 'bg-red-500 hover:bg-red-600' : 'bg-green-500 hover:bg-green-600'
+          }`}
+        >
+          <Power className="w-5 h-5" />
+          <span>{botState.isRunning ? 'Остановить' : 'Запустить'}</span>
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function TabButton({ active, icon: Icon, children, onClick }: { active: boolean; icon: any; children: React.ReactNode; onClick: () => void }) {
   return (
     <button
@@ -250,6 +302,7 @@ function App() {
         <header className="bg-white shadow">
           <div className="max-w-7xl mx-auto py-6 px-4 sm:px-6 lg:px-8">
             <h1 className="text-3xl font-bold text-gray-900 mb-6">IT Support Dashboard</h1>
+            <BotControl />
             <div className="flex space-x-4">
               <TabButton
                 active={activeTab === 'requests'}

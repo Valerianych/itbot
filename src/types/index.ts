@@ -23,3 +23,9 @@ export interface NotificationUser {
   chatId: string;
   isAdmin: boolean;
 }
+
+export interface BotState {
+  isRunning: boolean;
+  lastStarted?: Date;
+  lastStopped?: Date;
+}
