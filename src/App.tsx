@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { Clock, Monitor, Settings, PenTool as Tool, UserPlus, X, Check, ArrowLeft } from 'lucide-react';
+import { Clock, Monitor, Settings, PenTool as Tool, UserPlus, X, Check, ArrowLeft, Users, FileText } from 'lucide-react';
 import { format } from 'date-fns';
 import { useStore } from './store';
 import type { SupportRequest, RequestCategory, NotificationUser } from './types';
@@ -179,7 +179,7 @@ function NotificationUsersList() {
   };
 
   return (
-    <div className="bg-white rounded-lg shadow-md p-6 mb-6">
+    <div className="bg-white rounded-lg shadow-md p-6">
       <h2 className="text-xl font-semibold mb-4">Пользователи для уведомлений</h2>
       <div className="flex gap-2 mb-4">
         <input
@@ -223,8 +223,25 @@ function NotificationUsersList() {
   );
 }
 
+function TabButton({ active, icon: Icon, children, onClick }: { active: boolean; icon: any; children: React.ReactNode; onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      className={`flex items-center space-x-2 px-4 py-2 rounded-md transition-colors ${
+        active
+          ? 'bg-blue-500 text-white'
+          : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+      }`}
+    >
+      <Icon className="w-5 h-5" />
+      <span>{children}</span>
+    </button>
+  );
+}
+
 function App() {
   const { requests, selectedRequest, setSelectedRequest } = useStore();
+  const [activeTab, setActiveTab] = useState<'requests' | 'users'>('requests');
   const currentRequest = requests.find(r => r.id === selectedRequest);
 
   return (
@@ -232,23 +249,42 @@ function App() {
       <div className="min-h-screen bg-gray-100">
         <header className="bg-white shadow">
           <div className="max-w-7xl mx-auto py-6 px-4 sm:px-6 lg:px-8">
-            <h1 className="text-3xl font-bold text-gray-900">IT Support Dashboard</h1>
+            <h1 className="text-3xl font-bold text-gray-900 mb-6">IT Support Dashboard</h1>
+            <div className="flex space-x-4">
+              <TabButton
+                active={activeTab === 'requests'}
+                icon={FileText}
+                onClick={() => setActiveTab('requests')}
+              >
+                Заявки
+              </TabButton>
+              <TabButton
+                active={activeTab === 'users'}
+                icon={Users}
+                onClick={() => setActiveTab('users')}
+              >
+                Пользователи
+              </TabButton>
+            </div>
           </div>
         </header>
         <main className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
           <div className="px-4 py-6 sm:px-0">
-            <NotificationUsersList />
-            {selectedRequest && currentRequest ? (
-              <RequestDetails
-                request={currentRequest}
-                onBack={() => setSelectedRequest(null)}
-              />
+            {activeTab === 'users' ? (
+              <NotificationUsersList />
             ) : (
-              <div className="grid grid-cols-1 gap-6">
-                {requests.map((request) => (
-                  <RequestCard key={request.id} request={request} />
-                ))}
-              </div>
+              selectedRequest && currentRequest ? (
+                <RequestDetails
+                  request={currentRequest}
+                  onBack={() => setSelectedRequest(null)}
+                />
+              ) : (
+                <div className="grid grid-cols-1 gap-6">
+                  {requests.map((request) => (
+                    <RequestCard key={request.id} request={request} />
+                  ))}
+                </div>
+              )
             )}
           </div>
         </main>
@@ -257,4 +293,4 @@ function App() {
   );
 }
 
-export default App
+export default App;
