@@ -7,7 +7,8 @@
     "dev": "vite",
     "build": "vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "start-backend": "node backend/server.js"
   },
   "dependencies": {
     "lucide-react": "^0.344.0",
@@ -18,7 +19,8 @@
     "@tanstack/react-query": "^5.24.1",
     "zustand": "^4.5.2",
     "ws": "^8.16.0",
-    "express": "^4.18.3"
+    "express": "^4.18.3",
+    "cors": "^2.8.5"
   },
   "devDependencies": {
     "@eslint/js": "^9.9.1",
