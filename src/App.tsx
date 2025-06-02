@@ -13,19 +13,18 @@ const ws = new WebSocket('ws://localhost:3001');
 function BotControl() {
   const { botState, setBotState } = useStore();
 
-  useEffect(() => {
-    ws.onmessage = (event) => {
-      const data = JSON.parse(event.data);
-      if (data.type === 'INIT') {
-        setBotState({ isRunning: data.botState.isRunning });
+  const toggleBot = async () => {
+    try {
+      const response = await fetch(`http://localhost:3001/bot/${botState.isRunning ? 'stop' : 'start'}`, {
+        method: 'POST'
+      });
+      const data = await response.json();
+      if (data.success) {
+        setBotState({ isRunning: !botState.isRunning });
       }
-    };
-  }, [setBotState]);
-
-  const toggleBot = () => {
-    fetch(`http://localhost:3001/bot/${botState.isRunning ? 'stop' : 'start'}`, {
-      method: 'POST'
-    });
+    } catch (error) {
+      console.error('Failed to toggle bot:', error);
+    }
   };
 
   return (
@@ -347,25 +346,39 @@ function TabButton({ active, icon: Icon, children, onClick }: { active: boolean;
 }
 
 function App() {
-  const { requests, selectedRequest, setSelectedRequest } = useStore();
+  const { requests, selectedRequest, setSelectedRequest, setBotState, addRequest } = useStore();
   const [activeTab, setActiveTab] = useState<'requests' | 'users' | 'create'>('requests');
   const currentRequest = requests.find(r => r.id === selectedRequest);
 
   useEffect(() => {
+    ws.onopen = () => {
+      console.log('WebSocket connected');
+    };
+
     ws.onmessage = (event) => {
       const data = JSON.parse(event.data);
       if (data.type === 'INIT') {
-        // Initialize store with data from server
         data.requests.forEach((request: SupportRequest) => {
-          useStore.getState().addRequest(request);
+          addRequest(request);
         });
+        setBotState({ isRunning: data.botState.isRunning });
       } else if (data.type === 'NEW_REQUEST') {
-        useStore.getState().addRequest(data.request);
+        addRequest(data.request);
       } else if (data.type === 'UPDATE_REQUEST') {
-        useStore.getState().updateRequestStatus(data.request.id, data.request.status);
+        // Handle request updates
+        const updatedRequest = data.request;
+        useStore.getState().updateRequestStatus(updatedRequest.id, updatedRequest.status);
       }
     };
-  }, []);
+
+    ws.onerror = (error) => {
+      console.error('WebSocket error:', error);
+    };
+
+    return () => {
+      ws.close();
+    };
+  }, [addRequest, setBotState]);
 
   return (
     <QueryClientProvider client={queryClient}>
