@@ -17,14 +17,11 @@ app.use(express.json());
 const server = createServer(app);
 const wss = new WebSocketServer({ server });
 
-// Store user states
+// Store user states and data
 const userStates = new Map();
-
-// Store requests
 const requests = new Map();
-
-// Store notification users
 const notificationUsers = new Map();
+const userLastRequests = new Map(); // Store last request for repeat functionality
 
 const categories = {
   HARDWARE_REPLACEMENT: '🖱 Замена оборудования',
@@ -32,6 +29,27 @@ const categories = {
   TECHNICAL_SUPPORT: '🔧 Техническая поддержка',
   REPAIR: '🛠 Ремонт'
 };
+
+// Helper function to create keyboard
+function createMainKeyboard(userId) {
+  const keyboard = {
+    keyboard: [
+      [{ text: categories.HARDWARE_REPLACEMENT }],
+      [{ text: categories.SOFTWARE_INSTALLATION }],
+      [{ text: categories.TECHNICAL_SUPPORT }],
+      [{ text: categories.REPAIR }]
+    ],
+    resize_keyboard: true,
+    one_time_keyboard: true
+  };
+
+  // Add repeat button if user has previous request
+  if (userLastRequests.get(userId)) {
+    keyboard.keyboard.push([{ text: '🔄 Повторить последнюю заявку' }]);
+  }
+
+  return keyboard;
+}
 
 // Helper function to notify all admins
 async function notifyAdmins(message, keyboard = {}) {
@@ -50,45 +68,97 @@ async function notifyAdmins(message, keyboard = {}) {
   }
 }
 
+// Function to create a new request
+async function createRequest(userId, username, category, description) {
+  const requestId = Date.now().toString();
+  const request = {
+    id: requestId,
+    userId,
+    username,
+    category,
+    description,
+    status: 'PENDING',
+    createdAt: new Date(),
+    updatedAt: new Date()
+  };
+  
+  requests.set(requestId, request);
+  userLastRequests.set(userId, request);
+
+  // Notify WebSocket clients
+  wss.clients.forEach(client => {
+    client.send(JSON.stringify({
+      type: 'NEW_REQUEST',
+      request
+    }));
+  });
+
+  return request;
+}
+
 // Function to start the bot
 function startBot() {
   if (bot) return;
 
   bot = new TelegramBot(token, { polling: true });
 
-  // Set admin chat ID when they interact with the bot
+  // Handle /start command
   bot.onText(/\/start/, async (msg) => {
     const chatId = msg.chat.id;
+    const userId = msg.from.id;
     
-    // If this is the admin's first message, store their chat ID
     if (msg.from.username === adminUsername && !adminChatId) {
       adminChatId = chatId.toString();
       await bot.sendMessage(chatId, '✅ Вы успешно авторизованы как администратор!');
     }
 
-    const keyboard = {
-      keyboard: [
-        [{ text: categories.HARDWARE_REPLACEMENT }],
-        [{ text: categories.SOFTWARE_INSTALLATION }],
-        [{ text: categories.TECHNICAL_SUPPORT }],
-        [{ text: categories.REPAIR }]
-      ],
-      resize_keyboard: true,
-      one_time_keyboard: true
-    };
-
+    const keyboard = createMainKeyboard(userId);
     bot.sendMessage(chatId, 'Добро пожаловать! Выберите категорию заявки:', { reply_markup: keyboard });
   });
 
+  // Handle messages
   bot.on('message', async (msg) => {
     const chatId = msg.chat.id;
     const text = msg.text;
     const userId = msg.from.id;
     
-    // Skip command messages
     if (text?.startsWith('/')) return;
 
     const userState = userStates.get(userId) || {};
+
+    // Handle repeat request
+    if (text === '🔄 Повторить последнюю заявку') {
+      const lastRequest = userLastRequests.get(userId);
+      if (lastRequest) {
+        const newRequest = await createRequest(
+          userId,
+          msg.from.username || msg.from.first_name,
+          lastRequest.category,
+          lastRequest.description
+        );
+
+        const adminMessage = `
+📝 Новая заявка #${newRequest.id} (повторная)
+👤 От: @${newRequest.username}
+📋 Категория: ${categories[newRequest.category]}
+📄 Описание: ${newRequest.description}
+⏰ Время: ${newRequest.createdAt.toLocaleString('ru-RU')}
+        `;
+
+        const keyboard = {
+          inline_keyboard: [
+            [
+              { text: '✅ Принять', callback_data: `accept_${newRequest.id}` },
+              { text: '❌ Отклонить', callback_data: `reject_${newRequest.id}` }
+            ]
+          ]
+        };
+
+        await notifyAdmins(adminMessage, keyboard);
+        bot.sendMessage(chatId, 'Ваша заявка успешно создана! Мы рассмотрим её в ближайшее время.');
+        return;
+      }
+    }
 
     // Handle category selection
     if (Object.values(categories).includes(text)) {
@@ -102,57 +172,37 @@ function startBot() {
 
     // Handle description
     if (userState.stage === 'DESCRIPTION') {
-      const category = userState.category;
-      const description = text;
-      
-      // Create new request
-      const requestId = Date.now().toString();
-      const request = {
-        id: requestId,
-        userId: userId,
-        username: msg.from.username || msg.from.first_name,
-        category,
-        description,
-        status: 'PENDING',
-        createdAt: new Date(),
-        updatedAt: new Date()
-      };
-      
-      requests.set(requestId, request);
+      const request = await createRequest(
+        userId,
+        msg.from.username || msg.from.first_name,
+        userState.category,
+        text
+      );
 
-      // Notify WebSocket clients
-      wss.clients.forEach(client => {
-        client.send(JSON.stringify({
-          type: 'NEW_REQUEST',
-          request
-        }));
-      });
-      
-      // Send to admin
       const adminMessage = `
-📝 Новая заявка #${requestId}
+📝 Новая заявка #${request.id}
 👤 От: @${request.username}
-📋 Категория: ${categories[category]}
-📄 Описание: ${description}
+📋 Категория: ${categories[request.category]}
+📄 Описание: ${request.description}
 ⏰ Время: ${request.createdAt.toLocaleString('ru-RU')}
       `;
-      
+
       const keyboard = {
         inline_keyboard: [
           [
-            { text: '✅ Принять', callback_data: `accept_${requestId}` },
-            { text: '❌ Отклонить', callback_data: `reject_${requestId}` }
+            { text: '✅ Принять', callback_data: `accept_${request.id}` },
+            { text: '❌ Отклонить', callback_data: `reject_${request.id}` }
           ]
         ]
       };
-      
-      // Notify all admins
+
       await notifyAdmins(adminMessage, keyboard);
       
-      // Confirm to user
-      bot.sendMessage(chatId, 'Ваша заявка успешно создана! Мы рассмотрим её в ближайшее время.');
+      const userKeyboard = createMainKeyboard(userId);
+      bot.sendMessage(chatId, 'Ваша заявка успешно создана! Мы рассмотрим её в ближайшее время.', {
+        reply_markup: userKeyboard
+      });
       
-      // Clear user state
       userStates.delete(userId);
     }
   });
