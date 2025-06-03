@@ -7,15 +7,15 @@ import type { SupportRequest, RequestCategory, NotificationUser } from './types'
 
 const queryClient = new QueryClient();
 
-// WebSocket connection with dynamic hostname, without explicit port
-const ws = new WebSocket(`ws://${window.location.hostname}`);
+// Update WebSocket connection to use relative path
+const ws = new WebSocket(`ws://${window.location.host}/ws`);
 
 function BotControl() {
   const { botState, setBotState } = useStore();
 
   const toggleBot = async () => {
     try {
-      const response = await fetch(`http://${window.location.hostname}/bot/${botState.isRunning ? 'stop' : 'start'}`, {
+      const response = await fetch(`/api/bot/${botState.isRunning ? 'stop' : 'start'}`, {
         method: 'POST'
       });
       const data = await response.json();
