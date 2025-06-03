@@ -3,6 +3,59 @@ import TelegramBot from 'node-telegram-bot-api';
 import { createServer } from 'http';
 import { WebSocketServer } from 'ws';
 import cors from 'cors';
+import fs from 'node:fs';
+import path from 'node:path';
+
+// Data storage paths
+const DATA_DIR = './data';
+const REQUESTS_FILE = path.join(DATA_DIR, 'requests.json');
+const USERS_FILE = path.join(DATA_DIR, 'notification_users.json');
+
+// Create data directory if it doesn't exist
+if (!fs.existsSync(DATA_DIR)) {
+  fs.mkdirSync(DATA_DIR);
+}
+
+// Load data from files
+function loadData() {
+  try {
+    if (fs.existsSync(REQUESTS_FILE)) {
+      const requestsData = JSON.parse(fs.readFileSync(REQUESTS_FILE, 'utf8'));
+      requests.clear();
+      requestsData.forEach(request => {
+        request.createdAt = new Date(request.createdAt);
+        request.updatedAt = new Date(request.updatedAt);
+        requests.set(request.id, request);
+      });
+    }
+
+    if (fs.existsSync(USERS_FILE)) {
+      const usersData = JSON.parse(fs.readFileSync(USERS_FILE, 'utf8'));
+      notificationUsers.clear();
+      usersData.forEach(user => {
+        notificationUsers.set(user.username, user);
+      });
+    }
+  } catch (error) {
+    console.error('Error loading data:', error);
+  }
+}
+
+// Save data to files
+function saveData() {
+  try {
+    fs.writeFileSync(
+      REQUESTS_FILE,
+      JSON.stringify(Array.from(requests.values()), null, 2)
+    );
+    fs.writeFileSync(
+      USERS_FILE,
+      JSON.stringify(Array.from(notificationUsers.values()), null, 2)
+    );
+  } catch (error) {
+    console.error('Error saving data:', error);
+  }
+}
 
 // Telegram bot configuration
 const token = '7435351031:AAHwFywxl4j9Ou5aJcndg6OBuvzBJisymfY';
@@ -85,6 +138,9 @@ async function createRequest(userId, username, category, description) {
   requests.set(requestId, request);
   userLastRequests.set(userId, request);
 
+  // Save data after creating request
+  saveData();
+
   // Notify WebSocket clients
   wss.clients.forEach(client => {
     client.send(JSON.stringify({
@@ -99,6 +155,9 @@ async function createRequest(userId, username, category, description) {
 // Function to start the bot
 function startBot() {
   if (bot) return;
+
+  // Load saved data
+  loadData();
 
   bot = new TelegramBot(token, { polling: true });
 
@@ -228,6 +287,9 @@ function startBot() {
       request.updatedAt = new Date();
       requests.set(requestId, request);
       
+      // Save data after updating request
+      saveData();
+      
       // Notify user
       bot.sendMessage(request.userId, `✅ Ваша заявка #${requestId} принята в работу! Мы свяжемся с вами в ближайшее время.`);
       
@@ -247,6 +309,9 @@ function startBot() {
       request.status = 'REJECTED';
       request.updatedAt = new Date();
       requests.set(requestId, request);
+      
+      // Save data after updating request
+      saveData();
       
       // Notify user
       bot.sendMessage(request.userId, `❌ К сожалению, ваша заявка #${requestId} была отклонена. Пожалуйста, создайте новую заявку с более подробным описанием.`);
@@ -282,6 +347,9 @@ function startBot() {
 // Function to stop the bot
 function stopBot() {
   if (!bot) return;
+
+  // Save data before stopping
+  saveData();
 
   // Notify all users that bot is going offline
   notifyAdmins('🔴 Бот остановлен');
@@ -319,6 +387,9 @@ wss.on('connection', (ws) => {
         request.status = message.status;
         request.updatedAt = new Date();
         requests.set(message.requestId, request);
+
+        // Save data after updating request
+        saveData();
 
         // Notify user via bot if it's running
         if (bot) {
