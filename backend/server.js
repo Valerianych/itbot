@@ -5,6 +5,9 @@ import { WebSocketServer } from 'ws';
 import cors from 'cors';
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // Data storage paths
 const DATA_DIR = './data';
@@ -58,7 +61,7 @@ function saveData() {
 }
 
 // Telegram bot configuration
-const token = '7435351031:AAHwFywxl4j9Ou5aJcndg6OBuvzBJisymfY';
+const token = process.env.TELEGRAM_BOT_TOKEN || '7435351031:AAHwFywxl4j9Ou5aJcndg6OBuvzBJisymfY';
 const adminUsername = 'valerianychexe';
 let adminChatId = '';
 
@@ -66,6 +69,7 @@ let bot = null;
 const app = express();
 app.use(cors());
 app.use(express.json());
+app.use(express.static(path.join(__dirname, '../dist')));
 
 const server = createServer(app);
 const wss = new WebSocketServer({ server });
@@ -74,7 +78,7 @@ const wss = new WebSocketServer({ server });
 const userStates = new Map();
 const requests = new Map();
 const notificationUsers = new Map();
-const userLastRequests = new Map(); // Store last request for repeat functionality
+const userLastRequests = new Map();
 
 const categories = {
   HARDWARE_REPLACEMENT: '🖱 Замена оборудования',
@@ -96,7 +100,6 @@ function createMainKeyboard(userId) {
     one_time_keyboard: true
   };
 
-  // Add repeat button if user has previous request
   if (userLastRequests.get(userId)) {
     keyboard.keyboard.push([{ text: '🔄 Повторить последнюю заявку' }]);
   }
@@ -138,10 +141,8 @@ async function createRequest(userId, username, category, description) {
   requests.set(requestId, request);
   userLastRequests.set(userId, request);
 
-  // Save data after creating request
   saveData();
 
-  // Notify WebSocket clients
   wss.clients.forEach(client => {
     client.send(JSON.stringify({
       type: 'NEW_REQUEST',
@@ -156,12 +157,10 @@ async function createRequest(userId, username, category, description) {
 function startBot() {
   if (bot) return;
 
-  // Load saved data
   loadData();
 
   bot = new TelegramBot(token, { polling: true });
 
-  // Handle /start command
   bot.onText(/\/start/, async (msg) => {
     const chatId = msg.chat.id;
     const userId = msg.from.id;
@@ -175,7 +174,6 @@ function startBot() {
     bot.sendMessage(chatId, 'Добро пожаловать! Выберите категорию заявки:', { reply_markup: keyboard });
   });
 
-  // Handle messages
   bot.on('message', async (msg) => {
     const chatId = msg.chat.id;
     const text = msg.text;
@@ -185,7 +183,6 @@ function startBot() {
 
     const userState = userStates.get(userId) || {};
 
-    // Handle repeat request
     if (text === '🔄 Повторить последнюю заявку') {
       const lastRequest = userLastRequests.get(userId);
       if (lastRequest) {
@@ -219,7 +216,6 @@ function startBot() {
       }
     }
 
-    // Handle category selection
     if (Object.values(categories).includes(text)) {
       userState.category = Object.keys(categories).find(key => categories[key] === text);
       userState.stage = 'DESCRIPTION';
@@ -229,7 +225,6 @@ function startBot() {
       return;
     }
 
-    // Handle description
     if (userState.stage === 'DESCRIPTION') {
       const request = await createRequest(
         userId,
@@ -266,14 +261,12 @@ function startBot() {
     }
   });
 
-  // Handle admin actions
   bot.on('callback_query', async (query) => {
     const [action, requestId] = query.data.split('_');
     const request = requests.get(requestId);
     
     if (!request) return;
 
-    // Check if the user is an admin
     const isAdmin = query.from.username === adminUsername || 
       notificationUsers.get(query.from.username)?.isAdmin;
 
@@ -287,13 +280,10 @@ function startBot() {
       request.updatedAt = new Date();
       requests.set(requestId, request);
       
-      // Save data after updating request
       saveData();
       
-      // Notify user
       bot.sendMessage(request.userId, `✅ Ваша заявка #${requestId} принята в работу! Мы свяжемся с вами в ближайшее время.`);
       
-      // Update admin message
       const updatedMessage = `
 ✅ Заявка принята в работу
 📝 Заявка #${requestId}
@@ -310,13 +300,10 @@ function startBot() {
       request.updatedAt = new Date();
       requests.set(requestId, request);
       
-      // Save data after updating request
       saveData();
       
-      // Notify user
       bot.sendMessage(request.userId, `❌ К сожалению, ваша заявка #${requestId} была отклонена. Пожалуйста, создайте новую заявку с более подробным описанием.`);
       
-      // Update admin message
       const updatedMessage = `
 ❌ Заявка отклонена
 📝 Заявка #${requestId}
@@ -329,7 +316,6 @@ function startBot() {
       await notifyAdmins(updatedMessage);
     }
 
-    // Notify WebSocket clients about the status update
     wss.clients.forEach(client => {
       client.send(JSON.stringify({
         type: 'UPDATE_REQUEST',
@@ -340,7 +326,6 @@ function startBot() {
     bot.answerCallbackQuery(query.id);
   });
 
-  // Notify all users that bot is online
   notifyAdmins('🟢 Бот запущен и готов к работе');
 }
 
@@ -348,10 +333,7 @@ function startBot() {
 function stopBot() {
   if (!bot) return;
 
-  // Save data before stopping
   saveData();
-
-  // Notify all users that bot is going offline
   notifyAdmins('🔴 Бот остановлен');
   
   bot.stopPolling();
@@ -371,7 +353,6 @@ app.post('/bot/stop', (req, res) => {
 
 // Handle WebSocket connections
 wss.on('connection', (ws) => {
-  // Send current requests to new clients
   ws.send(JSON.stringify({
     type: 'INIT',
     requests: Array.from(requests.values()),
@@ -388,10 +369,8 @@ wss.on('connection', (ws) => {
         request.updatedAt = new Date();
         requests.set(message.requestId, request);
 
-        // Save data after updating request
         saveData();
 
-        // Notify user via bot if it's running
         if (bot) {
           const statusMessages = {
             'IN_PROGRESS': '✅ Ваша заявка принята в работу! Мы свяжемся с вами в ближайшее время.',
@@ -402,7 +381,6 @@ wss.on('connection', (ws) => {
           bot.sendMessage(request.userId, `${statusMessages[message.status]}\nЗаявка #${request.id}`);
         }
 
-        // Notify all WebSocket clients
         wss.clients.forEach(client => {
           client.send(JSON.stringify({
             type: 'UPDATE_REQUEST',
@@ -414,8 +392,13 @@ wss.on('connection', (ws) => {
   });
 });
 
+// Serve static files
+app.get('*', (req, res) => {
+  res.sendFile(path.join(__dirname, '../dist/index.html'));
+});
+
 // Start server
-const PORT = 3001;
+const PORT = process.env.PORT || 3001;
 server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
   startBot();
