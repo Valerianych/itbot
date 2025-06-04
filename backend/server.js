@@ -61,7 +61,12 @@ function saveData() {
 }
 
 // Telegram bot configuration
-const token = process.env.TELEGRAM_BOT_TOKEN || '7435351031:AAHwFywxl4j9Ou5aJcndg6OBuvzBJisymfY';
+const token = process.env.TELEGRAM_BOT_TOKEN;
+if (!token) {
+  console.error('Error: TELEGRAM_BOT_TOKEN environment variable is not set');
+  process.exit(1);
+}
+
 const adminUsername = 'valerianychexe';
 let adminChatId = '';
 
@@ -157,176 +162,194 @@ async function createRequest(userId, username, category, description) {
 function startBot() {
   if (bot) return;
 
-  loadData();
+  if (!token) {
+    console.error('Cannot start bot: TELEGRAM_BOT_TOKEN environment variable is not set');
+    return;
+  }
 
-  bot = new TelegramBot(token, { polling: true });
+  try {
+    loadData();
 
-  bot.onText(/\/start/, async (msg) => {
-    const chatId = msg.chat.id;
-    const userId = msg.from.id;
-    
-    if (msg.from.username === adminUsername && !adminChatId) {
-      adminChatId = chatId.toString();
-      await bot.sendMessage(chatId, '✅ Вы успешно авторизованы как администратор!');
-    }
+    bot = new TelegramBot(token, { polling: true });
 
-    const keyboard = createMainKeyboard(userId);
-    bot.sendMessage(chatId, 'Добро пожаловать! Выберите категорию заявки:', { reply_markup: keyboard });
-  });
+    bot.on('polling_error', (error) => {
+      console.error('Telegram bot polling error:', error);
+      if (error.code === 'EFATAL' || error.message.includes('unauthorized')) {
+        console.error('Invalid or expired token. Please check your TELEGRAM_BOT_TOKEN.');
+        stopBot();
+      }
+    });
 
-  bot.on('message', async (msg) => {
-    const chatId = msg.chat.id;
-    const text = msg.text;
-    const userId = msg.from.id;
-    
-    if (text?.startsWith('/')) return;
+    bot.onText(/\/start/, async (msg) => {
+      const chatId = msg.chat.id;
+      const userId = msg.from.id;
+      
+      if (msg.from.username === adminUsername && !adminChatId) {
+        adminChatId = chatId.toString();
+        await bot.sendMessage(chatId, '✅ Вы успешно авторизованы как администратор!');
+      }
 
-    const userState = userStates.get(userId) || {};
+      const keyboard = createMainKeyboard(userId);
+      bot.sendMessage(chatId, 'Добро пожаловать! Выберите категорию заявки:', { reply_markup: keyboard });
+    });
 
-    if (text === '🔄 Повторить последнюю заявку') {
-      const lastRequest = userLastRequests.get(userId);
-      if (lastRequest) {
-        const newRequest = await createRequest(
-          userId,
-          msg.from.username || msg.from.first_name,
-          lastRequest.category,
-          lastRequest.description
-        );
+    bot.on('message', async (msg) => {
+      const chatId = msg.chat.id;
+      const text = msg.text;
+      const userId = msg.from.id;
+      
+      if (text?.startsWith('/')) return;
 
-        const adminMessage = `
+      const userState = userStates.get(userId) || {};
+
+      if (text === '🔄 Повторить последнюю заявку') {
+        const lastRequest = userLastRequests.get(userId);
+        if (lastRequest) {
+          const newRequest = await createRequest(
+            userId,
+            msg.from.username || msg.from.first_name,
+            lastRequest.category,
+            lastRequest.description
+          );
+
+          const adminMessage = `
 📝 Новая заявка #${newRequest.id} (повторная)
 👤 От: @${newRequest.username}
 📋 Категория: ${categories[newRequest.category]}
 📄 Описание: ${newRequest.description}
 ⏰ Время: ${newRequest.createdAt.toLocaleString('ru-RU')}
-        `;
+          `;
 
-        const keyboard = {
-          inline_keyboard: [
-            [
-              { text: '✅ Принять', callback_data: `accept_${newRequest.id}` },
-              { text: '❌ Отклонить', callback_data: `reject_${newRequest.id}` }
+          const keyboard = {
+            inline_keyboard: [
+              [
+                { text: '✅ Принять', callback_data: `accept_${newRequest.id}` },
+                { text: '❌ Отклонить', callback_data: `reject_${newRequest.id}` }
+              ]
             ]
-          ]
-        };
+          };
 
-        await notifyAdmins(adminMessage, keyboard);
-        bot.sendMessage(chatId, 'Ваша заявка успешно создана! Мы рассмотрим её в ближайшее время.');
+          await notifyAdmins(adminMessage, keyboard);
+          bot.sendMessage(chatId, 'Ваша заявка успешно создана! Мы рассмотрим её в ближайшее время.');
+          return;
+        }
+      }
+
+      if (Object.values(categories).includes(text)) {
+        userState.category = Object.keys(categories).find(key => categories[key] === text);
+        userState.stage = 'DESCRIPTION';
+        userStates.set(userId, userState);
+        
+        bot.sendMessage(chatId, 'Пожалуйста, опишите вашу проблему подробно:');
         return;
       }
-    }
 
-    if (Object.values(categories).includes(text)) {
-      userState.category = Object.keys(categories).find(key => categories[key] === text);
-      userState.stage = 'DESCRIPTION';
-      userStates.set(userId, userState);
-      
-      bot.sendMessage(chatId, 'Пожалуйста, опишите вашу проблему подробно:');
-      return;
-    }
+      if (userState.stage === 'DESCRIPTION') {
+        const request = await createRequest(
+          userId,
+          msg.from.username || msg.from.first_name,
+          userState.category,
+          text
+        );
 
-    if (userState.stage === 'DESCRIPTION') {
-      const request = await createRequest(
-        userId,
-        msg.from.username || msg.from.first_name,
-        userState.category,
-        text
-      );
-
-      const adminMessage = `
+        const adminMessage = `
 📝 Новая заявка #${request.id}
 👤 От: @${request.username}
 📋 Категория: ${categories[request.category]}
 📄 Описание: ${request.description}
 ⏰ Время: ${request.createdAt.toLocaleString('ru-RU')}
-      `;
+        `;
 
-      const keyboard = {
-        inline_keyboard: [
-          [
-            { text: '✅ Принять', callback_data: `accept_${request.id}` },
-            { text: '❌ Отклонить', callback_data: `reject_${request.id}` }
+        const keyboard = {
+          inline_keyboard: [
+            [
+              { text: '✅ Принять', callback_data: `accept_${request.id}` },
+              { text: '❌ Отклонить', callback_data: `reject_${request.id}` }
+            ]
           ]
-        ]
-      };
+        };
 
-      await notifyAdmins(adminMessage, keyboard);
-      
-      const userKeyboard = createMainKeyboard(userId);
-      bot.sendMessage(chatId, 'Ваша заявка успешно создана! Мы рассмотрим её в ближайшее время.', {
-        reply_markup: userKeyboard
-      });
-      
-      userStates.delete(userId);
-    }
-  });
+        await notifyAdmins(adminMessage, keyboard);
+        
+        const userKeyboard = createMainKeyboard(userId);
+        bot.sendMessage(chatId, 'Ваша заявка успешно создана! Мы рассмотрим её в ближайшее время.', {
+          reply_markup: userKeyboard
+        });
+        
+        userStates.delete(userId);
+      }
+    });
 
-  bot.on('callback_query', async (query) => {
-    const [action, requestId] = query.data.split('_');
-    const request = requests.get(requestId);
-    
-    if (!request) return;
-
-    const isAdmin = query.from.username === adminUsername || 
-      notificationUsers.get(query.from.username)?.isAdmin;
-
-    if (!isAdmin) {
-      bot.answerCallbackQuery(query.id, { text: '⚠️ У вас нет прав для этого действия' });
-      return;
-    }
-
-    if (action === 'accept') {
-      request.status = 'IN_PROGRESS';
-      request.updatedAt = new Date();
-      requests.set(requestId, request);
+    bot.on('callback_query', async (query) => {
+      const [action, requestId] = query.data.split('_');
+      const request = requests.get(requestId);
       
-      saveData();
-      
-      bot.sendMessage(request.userId, `✅ Ваша заявка #${requestId} принята в работу! Мы свяжемся с вами в ближайшее время.`);
-      
-      const updatedMessage = `
+      if (!request) return;
+
+      const isAdmin = query.from.username === adminUsername || 
+        notificationUsers.get(query.from.username)?.isAdmin;
+
+      if (!isAdmin) {
+        bot.answerCallbackQuery(query.id, { text: '⚠️ У вас нет прав для этого действия' });
+        return;
+      }
+
+      if (action === 'accept') {
+        request.status = 'IN_PROGRESS';
+        request.updatedAt = new Date();
+        requests.set(requestId, request);
+        
+        saveData();
+        
+        bot.sendMessage(request.userId, `✅ Ваша заявка #${requestId} принята в работу! Мы свяжемся с вами в ближайшее время.`);
+        
+        const updatedMessage = `
 ✅ Заявка принята в работу
 📝 Заявка #${requestId}
 👤 От: @${request.username}
 📋 Категория: ${categories[request.category]}
 📄 Описание: ${request.description}
 ⏰ Обновлено: ${request.updatedAt.toLocaleString('ru-RU')}
-      `;
-      
-      await notifyAdmins(updatedMessage);
-      
-    } else if (action === 'reject') {
-      request.status = 'REJECTED';
-      request.updatedAt = new Date();
-      requests.set(requestId, request);
-      
-      saveData();
-      
-      bot.sendMessage(request.userId, `❌ К сожалению, ваша заявка #${requestId} была отклонена. Пожалуйста, создайте новую заявку с более подробным описанием.`);
-      
-      const updatedMessage = `
+        `;
+        
+        await notifyAdmins(updatedMessage);
+        
+      } else if (action === 'reject') {
+        request.status = 'REJECTED';
+        request.updatedAt = new Date();
+        requests.set(requestId, request);
+        
+        saveData();
+        
+        bot.sendMessage(request.userId, `❌ К сожалению, ваша заявка #${requestId} была отклонена. Пожалуйста, создайте новую заявку с более подробным описанием.`);
+        
+        const updatedMessage = `
 ❌ Заявка отклонена
 📝 Заявка #${requestId}
 👤 От: @${request.username}
 📋 Категория: ${categories[request.category]}
 📄 Описание: ${request.description}
 ⏰ Обновлено: ${request.updatedAt.toLocaleString('ru-RU')}
-      `;
+        `;
+        
+        await notifyAdmins(updatedMessage);
+      }
+
+      wss.clients.forEach(client => {
+        client.send(JSON.stringify({
+          type: 'UPDATE_REQUEST',
+          request
+        }));
+      });
       
-      await notifyAdmins(updatedMessage);
-    }
-
-    wss.clients.forEach(client => {
-      client.send(JSON.stringify({
-        type: 'UPDATE_REQUEST',
-        request
-      }));
+      bot.answerCallbackQuery(query.id);
     });
-    
-    bot.answerCallbackQuery(query.id);
-  });
 
-  notifyAdmins('🟢 Бот запущен и готов к работе');
+    notifyAdmins('🟢 Бот запущен и готов к работе');
+  } catch (error) {
+    console.error('Error starting bot:', error);
+    bot = null;
+  }
 }
 
 // Function to stop the bot
