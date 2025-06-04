@@ -7,8 +7,9 @@ import type { SupportRequest, RequestCategory, NotificationUser } from './types'
 
 const queryClient = new QueryClient();
 
-// Update WebSocket connection to use relative path
-const ws = new WebSocket(`ws://${window.location.host}/ws`);
+// Use secure WebSocket if page is loaded over HTTPS
+const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+const ws = new WebSocket(`${protocol}//${window.location.host}/ws`);
 
 function BotControl() {
   const { botState, setBotState } = useStore();
@@ -365,7 +366,6 @@ function App() {
       } else if (data.type === 'NEW_REQUEST') {
         addRequest(data.request);
       } else if (data.type === 'UPDATE_REQUEST') {
-        // Handle request updates
         const updatedRequest = data.request;
         useStore.getState().updateRequestStatus(updatedRequest.id, updatedRequest.status);
       }
